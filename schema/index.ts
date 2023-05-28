@@ -1,5 +1,9 @@
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const User = require("../models/User");
 const Customer = require("../models/Customer");
 const Market = require("../models/Market");
+const {FileUpload} = require("./types");
 
 const {
   GraphQLObjectType,
@@ -10,6 +14,26 @@ const {
   GraphQLNonNull,
   GraphQLEnumType,
 } = require("graphql");
+
+// User Type
+const UserType = new GraphQLObjectType({
+  name: "User",
+  fields: () => ({
+    id: { type: GraphQLID },
+    name: { type: GraphQLString },
+    email: { type: GraphQLString },
+    password: { type: GraphQLString },
+    token: { type: GraphQLString },
+    tokenExpiration: { type: GraphQLString },
+    // photo: { type: GraphQLString }, // File Upload Coming Soon
+    client: {
+      type: UserType,
+      resolve(parent: { clientId: any }, args: any) {
+        return User.findById(parent.clientId);
+      },
+    },
+  }),
+});
 
 // Customer Type
 const CustomerType = new GraphQLObjectType({
@@ -44,11 +68,25 @@ const MarketType = new GraphQLObjectType({
 const RootQuery = new GraphQLObjectType({
   name: "RootQueryType",
   fields: {
+    users: {
+      type: new GraphQLList(UserType),
+      resolve(parent: any, args: any) {
+        const users = User.findAll();
+        return users;
+      },
+    },
+    user: {
+      type: UserType,
+      args: { id: { type: GraphQLID } },
+      resolve(parent: any, args: { id: any }) {
+        return User.findById(args.id);
+      },
+    },
     customers: {
       type: new GraphQLList(CustomerType),
       resolve(parent: any, args: any) {
         const customers = Customer.findAll();
-        return customers
+        return customers;
         console.log(customers.every((user: any) => user instanceof Customer)); // true
         console.log("All users:", JSON.stringify(customers, null, 2));
         return Customer.find();
@@ -112,6 +150,107 @@ const mutation = new GraphQLObjectType({
         const customer = Customer.create(customerData);
         console.log("customer's auto-generated ID:", customer.id);
         return customer;
+      },
+    },
+    // Add a user
+    registerUser: {
+      type: UserType,
+      args: {
+        name: { type: new GraphQLNonNull(GraphQLString) },
+        email: { type: new GraphQLNonNull(GraphQLString) },
+        password: { type: new GraphQLNonNull(GraphQLString) },
+      },
+      async resolve(
+        parent: any,
+        args: {
+          name: any;
+          email: any;
+          password: any;
+        }
+      ) {
+        try {
+          const existingUser = await User.findOne({ email: args.email });
+          if (existingUser) {
+            throw new Error("User exists already.");
+          }
+
+          const hashedPassword = await bcrypt.hash(args.password, 12);
+
+          const userData = {
+            name: args.name,
+            email: args.email,
+            password: hashedPassword,
+          };
+
+          const user = await User.create(userData);
+          console.log("user's auto-generated ID:", user.id);
+          return user;
+        } catch (err) {
+          throw err;
+        }
+      },
+    },
+    // User Login
+    loginUser: {
+      type: UserType,
+      args: {
+        email: { type: new GraphQLNonNull(GraphQLString) },
+        password: { type: new GraphQLNonNull(GraphQLString) },
+      },
+      async resolve(
+        parent: any,
+        args: {
+          email: any;
+          password: any;
+        }
+      ) {
+        try {
+          const existingUser = await User.findOne({ email: args.email });
+          if (!existingUser) {
+            throw new Error("User does not exist.");
+          }
+
+          const isEqual = await bcrypt.compare(
+            args.password,
+            existingUser.password
+          );
+
+          if (!isEqual) {
+            throw new Error("Password is incorrect!");
+          }
+
+          const token = jwt.sign(
+            { userId: existingUser.id, email: existingUser.email },
+            "secret",
+            {
+              expiresIn: "1h",
+            }
+          );
+
+          return {
+            name: existingUser.name,
+            userId: existingUser.id,
+            token: token,
+            tokenExpiration: 1,
+          };
+        } catch (err) {
+          throw err;
+        }
+      },
+    },
+
+    // Upload file
+    uploadFile: {
+      type: FileUpload,
+      // args: {
+      //   name: { type: GraphQLNonNull(GraphQLString) },
+      //   email: { type: GraphQLNonNull(GraphQLString) },
+      //   phone: { type: GraphQLNonNull(GraphQLString) },
+      // },
+      resolve(parent: any, args: { file: any }) {
+        console.log(args.file);
+
+        return args.file;
       },
     },
 
